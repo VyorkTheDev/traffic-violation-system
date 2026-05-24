@@ -1,15 +1,18 @@
 import base64
 import json
+import logging
 import os
 import re
-import threading
+import time
 import traceback
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 import anthropic
 from models import db, Violation
 
-MODEL = "claude-sonnet-4-6"
+logger = logging.getLogger(__name__)
+
 PROMPT = (
     "Analyze this traffic photo. Detect if the driver is:\n"
     "1. Using a phone while driving\n"
@@ -26,28 +29,20 @@ MEDIA_TYPES = {
     "webp": "image/webp",
 }
 
-
-def _log(msg: str):
-    print(f"[AI Service] {msg}", flush=True)
+_executor = ThreadPoolExecutor(max_workers=10)
 
 
 def _photo_to_base64(photo_url: str, upload_folder: str) -> tuple[str, str]:
-    """
-    Fotoğrafı base64'e çevirir.
-    - photo_url http/https ile başlıyorsa (Cloudinary) → URL'den indirir
-    - Başlamıyorsa (eski local yol) → diskten okur
-    """
     if photo_url.startswith("http://") or photo_url.startswith("https://"):
-        _log(f"Fetching photo from URL: {photo_url}")
+        logger.info("Fetching photo from URL: %s", photo_url)
         with urllib.request.urlopen(photo_url, timeout=15) as response:
             raw = response.read()
-        # Uzantıyı URL'den çıkar
-        url_path = photo_url.split("?")[0]  # query string varsa temizle
+        url_path = photo_url.split("?")[0]
         ext = url_path.rsplit(".", 1)[-1].lower()
     else:
         filename = os.path.basename(photo_url)
         path = os.path.join(upload_folder, filename)
-        _log(f"Reading photo from disk: {path}")
+        logger.info("Reading photo from disk: %s", path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Photo not found on disk: {path}")
         ext = filename.rsplit(".", 1)[-1].lower()
@@ -55,19 +50,14 @@ def _photo_to_base64(photo_url: str, upload_folder: str) -> tuple[str, str]:
             raw = f.read()
 
     media_type = MEDIA_TYPES.get(ext, "image/jpeg")
-    _log(f"Detected media type: {media_type}")
-    _log(f"File size: {len(raw)} bytes")
-
     data = base64.standard_b64encode(raw).decode("utf-8")
     assert not data.startswith("data:"), "base64 must NOT include a data-URI prefix"
-    _log(f"Base64 length: {len(data)} chars")
-
+    logger.debug("Photo encoded: media_type=%s size=%d b64_len=%d", media_type, len(raw), len(data))
     return data, media_type
 
 
 def _parse_ai_response(text: str) -> dict:
     clean = text.strip()
-
     if clean.startswith("```"):
         lines = clean.splitlines()
         inner = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
@@ -76,12 +66,10 @@ def _parse_ai_response(text: str) -> dict:
     try:
         parsed = json.loads(clean)
     except json.JSONDecodeError:
-        _log(f"Direct JSON parse failed, trying regex extraction on: {text!r}")
+        logger.warning("Direct JSON parse failed, trying regex on: %r", text)
         m = re.search(r"\{[^{}]+\}", text, re.DOTALL)
         if not m:
-            raise json.JSONDecodeError(
-                f"No JSON object found in response: {text!r}", text, 0
-            )
+            raise json.JSONDecodeError(f"No JSON object found: {text!r}", text, 0)
         parsed = json.loads(m.group())
 
     result = {
@@ -89,20 +77,16 @@ def _parse_ai_response(text: str) -> dict:
         "smoking":     bool(parsed.get("smoking",     False)),
         "no_seatbelt": bool(parsed.get("no_seatbelt", False)),
     }
-    _log(f"Parsed result: {result}")
+    logger.info("Parsed AI result: %s", result)
     return result
 
 
-def _run_analysis(violation: "Violation", upload_folder: str) -> dict:
-    _log("Converting photo to base64...")
+def _run_analysis(violation: "Violation", upload_folder: str, model: str) -> dict:
     image_data, media_type = _photo_to_base64(violation.photo_url, upload_folder)
-
-    _log("Creating Anthropic client...")
     client = anthropic.Anthropic(timeout=30.0)
-
-    _log(f"Sending to Claude API (model={MODEL})...")
+    logger.info("Sending to Claude API (model=%s violation_id=%d)", model, violation.id)
     message = client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=256,
         messages=[
             {
@@ -110,85 +94,103 @@ def _run_analysis(violation: "Violation", upload_folder: str) -> dict:
                 "content": [
                     {
                         "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": image_data,
-                        },
+                        "source": {"type": "base64", "media_type": media_type, "data": image_data},
                     },
-                    {
-                        "type": "text",
-                        "text": PROMPT,
-                    },
+                    {"type": "text", "text": PROMPT},
                 ],
             }
         ],
     )
-
     raw_text = message.content[0].text
-    _log(f"Raw API response: {raw_text!r}")
-    _log(f"Token usage -- input: {message.usage.input_tokens}, output: {message.usage.output_tokens}")
-
+    logger.debug(
+        "Raw response: %r | tokens in=%d out=%d",
+        raw_text, message.usage.input_tokens, message.usage.output_tokens,
+    )
     return _parse_ai_response(raw_text)
 
 
 def analyze_violation(app, violation_id: int) -> None:
     with app.app_context():
-        _log(f"Starting analysis for violation ID: {violation_id}")
+        logger.info("Starting analysis for violation %d", violation_id)
 
         violation = Violation.query.get(violation_id)
         if not violation:
-            _log(f"ERROR -- violation {violation_id} not found in DB")
+            logger.error("Violation %d not found in DB", violation_id)
             return
 
         upload_folder = app.config["UPLOAD_FOLDER"]
+        model         = app.config.get("AI_MODEL", "claude-sonnet-4-6")
+        max_retries   = app.config.get("AI_MAX_RETRIES", 2)
 
         violation.ai_status = "processing"
         db.session.commit()
-        _log("Status set to: processing")
 
-        try:
-            violation_type = _run_analysis(violation, upload_folder)
-            violation.violation_type = violation_type
-            violation.ai_status = "completed"
-            _log(f"Analysis complete. violation_type={violation_type}")
+        last_exc = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                violation_type = _run_analysis(violation, upload_folder, model)
+                violation.violation_type = violation_type
+                violation.ai_status = "completed"
 
-        except FileNotFoundError as exc:
-            _log(f"ERROR -- photo file not found: {exc}")
-            violation.ai_result = {"error": f"Photo file not found: {exc}"}
-            violation.ai_status = "failed"
+                try:
+                    from models import User
+                    owner = User.query.get(violation.vehicle.owner_id)
+                    if owner:
+                        penalty = sum(5 for v in violation_type.values() if v)
+                        if penalty > 0:
+                            owner.points = max(0, owner.points - penalty)
+                            if owner.points == 0:
+                                owner.license_status = "suspended"
+                            db.session.commit()
+                            logger.info(
+                                "Points updated: owner=%s penalty=%d remaining=%d",
+                                owner.username, penalty, owner.points,
+                            )
+                except Exception as exc:
+                    logger.warning("Could not update points: %s", exc)
 
-        except json.JSONDecodeError as exc:
-            _log(f"ERROR -- JSON parse failed: {exc}")
-            violation.ai_result = {"error": f"Could not parse AI response: {exc}"}
-            violation.ai_status = "failed"
+                logger.info("Analysis complete for violation %d: %s", violation_id, violation_type)
+                last_exc = None
+                break
 
-        except anthropic.AuthenticationError as exc:
-            _log(f"ERROR -- API authentication failed (check ANTHROPIC_API_KEY): {exc}")
-            violation.ai_result = {"error": f"API authentication failed: {exc}"}
-            violation.ai_status = "failed"
+            except (FileNotFoundError, json.JSONDecodeError, anthropic.AuthenticationError) as exc:
+                # Non-retryable: bad config, missing file, unparseable response
+                logger.error("Non-retryable error for violation %d: %s", violation_id, exc)
+                violation.ai_result = {"error": str(exc)}
+                violation.ai_status = "failed"
+                last_exc = None
+                break
 
-        except anthropic.APITimeoutError:
-            _log("ERROR -- Claude API request timed out (30s)")
-            violation.ai_result = {"error": "Claude API request timed out"}
-            violation.ai_status = "failed"
+            except (anthropic.APITimeoutError, anthropic.APIError) as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    wait = 2 ** (attempt - 1)
+                    logger.warning(
+                        "Attempt %d/%d failed (%s), retrying in %ds",
+                        attempt, max_retries, exc, wait,
+                    )
+                    time.sleep(wait)
+                else:
+                    logger.error("All %d attempts failed for violation %d: %s", max_retries, violation_id, exc)
 
-        except anthropic.APIError as exc:
-            _log(f"ERROR -- Claude API error: {exc}")
-            violation.ai_result = {"error": f"Claude API error: {exc}"}
-            violation.ai_status = "failed"
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error for violation %d: %s\n%s",
+                    violation_id, exc, traceback.format_exc(),
+                )
+                violation.ai_result = {"error": str(exc)}
+                violation.ai_status = "failed"
+                last_exc = None
+                break
 
-        except Exception as exc:
-            _log(f"ERROR -- unexpected exception: {exc}")
-            _log(traceback.format_exc())
-            violation.ai_result = {"error": str(exc)}
+        if last_exc is not None:
+            violation.ai_result = {"error": str(last_exc)}
             violation.ai_status = "failed"
 
         db.session.commit()
-        _log(f"Final status saved: {violation.ai_status}")
+        logger.info("Final status for violation %d: %s", violation_id, violation.ai_status)
 
 
 def trigger_async(app, violation_id: int) -> None:
-    _log(f"Spawning background thread for violation ID: {violation_id}")
-    t = threading.Thread(target=analyze_violation, args=(app, violation_id), daemon=True)
-    t.start()
+    logger.info("Submitting violation %d to thread pool", violation_id)
+    _executor.submit(analyze_violation, app, violation_id)

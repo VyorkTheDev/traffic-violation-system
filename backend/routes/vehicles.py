@@ -1,7 +1,7 @@
 from flask import Blueprint, request, g
 from models import db, Vehicle
 from middleware import token_required
-from utils import ok, err, normalize_plate
+from utils import ok, err, normalize_plate, validate_plate
 
 vehicles_bp = Blueprint("vehicles", __name__, url_prefix="/api/vehicles")
 
@@ -30,6 +30,9 @@ def create_vehicle():
 
     if not plate or not brand or not model or not year:
         return err("plate, brand, model and year are required")
+
+    if not validate_plate(plate):
+        return err("Geçersiz plaka formatı. Beklenen: 34AB123 veya 34 AB 123", 400)
 
     try:
         year = int(year)

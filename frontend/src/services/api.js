@@ -44,6 +44,12 @@ export const auth = {
 
   register: (username, email, password) =>
     api.post('/auth/register', { username, email, password }),
+
+  verifyOtp: (email, otp) =>
+    api.post('/auth/verify-otp', { email, otp }),
+
+  resendOtp: (email) =>
+    api.post('/auth/resend-otp', { email }),
 }
 
 // ---------------------------------------------------------------------------

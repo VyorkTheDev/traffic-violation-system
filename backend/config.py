@@ -1,11 +1,16 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 class Config:
     # Flask
-    SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret-key")
+    SECRET_KEY = os.getenv("SECRET_KEY")
+    if not SECRET_KEY:
+        raise RuntimeError(
+            "SECRET_KEY ortam değişkeni tanımlı değil. "
+            "Başlatmadan önce .env dosyasına veya ortama ekleyin."
+        )
     DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
 
     # Database
@@ -29,11 +34,13 @@ class Config:
     )
 
     # JWT
-    JWT_SECRET = os.getenv("SECRET_KEY", "fallback-secret-key")
+    JWT_SECRET = SECRET_KEY
     JWT_EXPIRATION_HOURS = 24
 
     # Anthropic
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+    AI_MODEL          = os.getenv("AI_MODEL", "claude-sonnet-4-6")
+    AI_MAX_RETRIES    = int(os.getenv("AI_MAX_RETRIES", "2"))
 
     # Cloudinary
     CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
@@ -47,3 +54,10 @@ class Config:
     )
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))
     ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+    
+    MAIL_USERNAME = os.getenv("MAIL_USERNAME")
+    MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
+    MAIL_FROM = os.getenv("MAIL_USERNAME")
+    MAIL_SERVER = "smtp.gmail.com"
+    MAIL_PORT = 587
+

@@ -1,19 +1,24 @@
-import os
+import logging
+import threading
+
 import cloudinary
 import cloudinary.uploader
 from flask import Blueprint, request, g, current_app
-from models import db, Vehicle, Violation
+from sqlalchemy.orm import joinedload
+from models import db, Vehicle, Violation, User
 from middleware import token_required, role_required
-from utils import ok, err, normalize_plate
+from utils import ok, err, normalize_plate, validate_plate
 import ai_service
+import mail_service
+
+logger = logging.getLogger(__name__)
 
 violations_bp = Blueprint("violations", __name__, url_prefix="/api/violations")
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
-
 
 def _allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    ext = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+    return ext in current_app.config["ALLOWED_EXTENSIONS"]
 
 
 def _configure_cloudinary():
@@ -49,57 +54,54 @@ def _delete_photo(public_id: str):
     cloudinary.uploader.destroy(public_id)
 
 
-def _with_vehicle(v: Violation) -> dict:
-    data = v.to_dict()
-    if v.vehicle:
-        data["vehicle"] = {
-            "plate": v.vehicle.plate,
-            "brand": v.vehicle.brand,
-            "model": v.vehicle.model,
-        }
-    return data
-
-
 @violations_bp.route("/", methods=["GET"])
 @token_required
 def list_violations():
     user = g.current_user
 
-    if user.role in ("police", "admin"):
-        violations = Violation.query.order_by(Violation.created_at.desc()).all()
-    else:
-        owned_plates = [v.plate for v in Vehicle.query.filter_by(owner_id=user.id).all()]
-        violations = (
-            Violation.query
-            .filter(Violation.plate.in_(owned_plates))
-            .order_by(Violation.created_at.desc())
-            .all()
-        )
+    owned_plates_sq = (
+        db.session.query(Vehicle.plate)
+        .filter(Vehicle.owner_id == user.id)
+        .subquery()
+    )
+    violations = (
+        Violation.query
+        .options(joinedload(Violation.vehicle))
+        .filter(Violation.plate.in_(owned_plates_sq))
+        .order_by(Violation.created_at.desc())
+        .all()
+    )
 
-    return ok(data=[_with_vehicle(v) for v in violations])
+    return ok(data=[v.to_dict_with_vehicle() for v in violations])
 
 
 @violations_bp.route("/<int:violation_id>", methods=["GET"])
 @token_required
 def get_violation(violation_id):
-    violation = Violation.query.get(violation_id)
+    violation = (
+        Violation.query
+        .options(joinedload(Violation.vehicle))
+        .filter(Violation.id == violation_id)
+        .first()
+    )
     if not violation:
         return err("Violation not found", 404)
 
     user = g.current_user
     if user.role not in ("police", "admin"):
-        owned_plates = [v.plate for v in Vehicle.query.filter_by(owner_id=user.id).all()]
-        if violation.plate not in owned_plates:
+        owns = db.session.query(Vehicle.id).filter(
+            Vehicle.owner_id == user.id,
+            Vehicle.plate == violation.plate,
+        ).first()
+        if not owns:
             return err("Access denied", 403)
 
-    return ok(data=_with_vehicle(violation))
+    return ok(data=violation.to_dict_with_vehicle())
 
 
 @violations_bp.route("/", methods=["POST"])
 @role_required("police")
 def create_violation():
-    print("=== VIOLATION CREATION START ===", flush=True)
-
     photo = request.files.get("photo")
     plate = normalize_plate(request.form.get("plate") or "")
     location = (request.form.get("location") or "").strip()
@@ -108,20 +110,20 @@ def create_violation():
     latitude_raw = request.form.get("latitude")
     longitude_raw = request.form.get("longitude")
 
-    if photo:
-        print(f"  Photo filename   : {photo.filename}", flush=True)
-        print(f"  Photo mimetype   : {photo.mimetype}", flush=True)
-    else:
-        print("  Photo            : NOT received", flush=True)
-
-    print(f"  Plate            : {plate!r}", flush=True)
-    print(f"  Location         : {location!r}", flush=True)
+    logger.debug(
+        "create_violation: plate=%r location=%r photo=%s",
+        plate, location, photo.filename if photo else "missing",
+    )
 
     if not photo or not plate or not location:
         return err("photo, plate and location are required", 400)
 
+    if not validate_plate(plate):
+        return err("Geçersiz plaka formatı. Beklenen: 34AB123 veya 34 AB 123", 400)
+
     if not _allowed_file(photo.filename):
-        return err(f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}", 400)
+        allowed = ', '.join(current_app.config["ALLOWED_EXTENSIONS"])
+        return err(f"Unsupported file type. Allowed: {allowed}", 400)
 
     vehicle = Vehicle.query.filter_by(plate=plate).first()
     if not vehicle:
@@ -133,11 +135,15 @@ def create_violation():
             speed = int(speed_raw)
         except (ValueError, TypeError):
             return err("speed must be an integer")
+        if not (0 <= speed <= 400):
+            return err("speed must be between 0 and 400 km/h")
 
     speed_limit = None
     if speed_limit_raw is not None:
         try:
             speed_limit = int(speed_limit_raw)
+            if not (0 <= speed_limit <= 400):
+                speed_limit = None
         except (ValueError, TypeError):
             pass
 
@@ -145,27 +151,29 @@ def create_violation():
     if latitude_raw is not None:
         try:
             latitude = float(latitude_raw)
+            if not (-90 <= latitude <= 90):
+                return err("latitude must be between -90 and 90")
         except (ValueError, TypeError):
-            pass
+            return err("latitude must be a number")
 
     longitude = None
     if longitude_raw is not None:
         try:
             longitude = float(longitude_raw)
+            if not (-180 <= longitude <= 180):
+                return err("longitude must be between -180 and 180")
         except (ValueError, TypeError):
-            pass
+            return err("longitude must be a number")
 
     try:
-        # Cloudinary'ye yükle, URL ve public_id al
         photo_url, photo_public_id = _save_photo(photo)
-        print(f"  Cloudinary URL   : {photo_url}", flush=True)
-        print(f"  Cloudinary PID   : {photo_public_id}", flush=True)
+        logger.info("Photo uploaded: url=%s pid=%s", photo_url, photo_public_id)
 
         violation = Violation(
             vehicle_id=vehicle.id,
             plate=plate,
             photo_url=photo_url,
-            photo_public_id=photo_public_id,   # ← modele bu alan eklenmeli (aşağıya bak)
+            photo_public_id=photo_public_id,
             speed=speed,
             speed_limit=speed_limit,
             location=location,
@@ -177,16 +185,44 @@ def create_violation():
         )
         db.session.add(violation)
         db.session.commit()
-        print(f"  Violation #{violation.id} committed to DB", flush=True)
+        logger.info("Violation #%d committed to DB", violation.id)
     except Exception as e:
         db.session.rollback()
         return err(f"Could not create violation: {str(e)}", 500)
 
-    print("  Calling AI service...", flush=True)
     ai_service.trigger_async(current_app._get_current_object(), violation.id)
-    print("=== VIOLATION CREATION END (AI running in background) ===", flush=True)
+
+    # Araç sahibine bildirim e-postası gönder (hata olursa sadece logla, ihlal kaydı geçerli)
+    _notify_owner_async(vehicle, violation)
 
     return ok(data=violation.to_dict(), message="Violation created, AI analysis started", code=201)
+
+
+def _notify_owner_async(vehicle: Vehicle, violation: Violation) -> None:
+    """Araç sahibine ihlal bildirimini arka planda gönderir; ana isteği bloklamaz."""
+    owner = User.query.get(vehicle.owner_id)
+    if not owner:
+        return
+
+    violation_id = violation.id
+    plate        = violation.plate
+    location     = violation.location
+    email        = owner.email
+    username     = owner.username
+
+    def _send():
+        try:
+            mail_service.send_violation_email(
+                to=email,
+                username=username,
+                violation_id=violation_id,
+                plate=plate,
+                location=location,
+            )
+        except Exception:
+            logger.exception("Otomatik ihlal bildirimi gönderilemedi: violation_id=%d", violation_id)
+
+    threading.Thread(target=_send, daemon=True).start()
 
 
 @violations_bp.route("/<int:violation_id>", methods=["PUT"])

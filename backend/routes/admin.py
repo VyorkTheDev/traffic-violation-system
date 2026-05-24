@@ -1,13 +1,15 @@
-import os
 from datetime import datetime, timezone, timedelta
 
 import bcrypt
+import cloudinary
+import cloudinary.uploader
 from flask import Blueprint, request, current_app
-from sqlalchemy import func, cast, Date
+from sqlalchemy import func, cast, Date, case
+from sqlalchemy.orm import joinedload
 
 from models import db, User, Vehicle, Violation
 from middleware import role_required
-from utils import ok, err
+from utils import ok, err, normalize_plate, validate_plate
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -19,8 +21,19 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 @admin_bp.route("/users", methods=["GET"])
 @role_required("admin")
 def list_users():
-    users = User.query.order_by(User.created_at.desc()).all()
-    return ok(data=[u.to_dict() for u in users])
+    page     = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 200)
+    paginated = (
+        User.query
+        .order_by(User.created_at.desc())
+        .paginate(page=page, per_page=per_page, error_out=False)
+    )
+    return ok(data=[u.to_dict() for u in paginated.items], meta={
+        "page": paginated.page,
+        "per_page": per_page,
+        "total": paginated.total,
+        "pages": paginated.pages,
+    })
 
 
 @admin_bp.route("/users", methods=["POST"])
@@ -94,9 +107,16 @@ def update_role(user_id):
 @admin_bp.route("/vehicles", methods=["GET"])
 @role_required("admin")
 def list_vehicles():
-    vehicles = Vehicle.query.order_by(Vehicle.created_at.desc()).all()
+    page     = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 200)
+    paginated = (
+        Vehicle.query
+        .options(joinedload(Vehicle.owner))
+        .order_by(Vehicle.created_at.desc())
+        .paginate(page=page, per_page=per_page, error_out=False)
+    )
     result = []
-    for v in vehicles:
+    for v in paginated.items:
         data = v.to_dict()
         data["owner"] = {
             "id": v.owner.id,
@@ -104,14 +124,19 @@ def list_vehicles():
             "email": v.owner.email,
         }
         result.append(data)
-    return ok(data=result)
+    return ok(data=result, meta={
+        "page": paginated.page,
+        "per_page": per_page,
+        "total": paginated.total,
+        "pages": paginated.pages,
+    })
 
 
 @admin_bp.route("/vehicles", methods=["POST"])
 @role_required("admin")
 def create_vehicle():
     data = request.get_json(silent=True) or {}
-    plate = (data.get("plate") or "").strip().upper()
+    plate = normalize_plate(data.get("plate") or "")
     brand = (data.get("brand") or "").strip()
     model = (data.get("model") or "").strip()
     year = data.get("year")
@@ -119,6 +144,9 @@ def create_vehicle():
 
     if not plate or not brand or not model or not year or not owner_id:
         return err("plate, brand, model, year and owner_id are required", 400)
+
+    if not validate_plate(plate):
+        return err("Geçersiz plaka formatı. Beklenen: 34AB123 veya 34 AB 123", 400)
 
     try:
         year = int(year)
@@ -199,18 +227,31 @@ def list_violations():
                 Violation.violation_type[violation_type].astext == "true"
             )
 
-    violations = query.order_by(Violation.created_at.desc()).all()
-    return ok(data=[v.to_dict() for v in violations])
+    page     = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 200)
+    paginated = (
+        query
+        .order_by(Violation.created_at.desc())
+        .paginate(page=page, per_page=per_page, error_out=False)
+    )
+    return ok(data=[v.to_dict() for v in paginated.items], meta={
+        "page": paginated.page,
+        "per_page": per_page,
+        "total": paginated.total,
+        "pages": paginated.pages,
+    })
 
 
 @admin_bp.route("/violations/<int:violation_id>", methods=["GET"])
 @role_required("admin")
 def get_violation(violation_id):
-    violation = Violation.query.get_or_404(violation_id)
-    data = violation.to_dict()
-    if violation.vehicle:
-        data["vehicle"] = violation.vehicle.to_dict()
-    return ok(data=data)
+    violation = (
+        Violation.query
+        .options(joinedload(Violation.vehicle))
+        .filter(Violation.id == violation_id)
+        .first_or_404()
+    )
+    return ok(data=violation.to_dict_with_vehicle())
 
 
 @admin_bp.route("/violations/<int:violation_id>", methods=["DELETE"])
@@ -218,12 +259,18 @@ def get_violation(violation_id):
 def delete_violation(violation_id):
     violation = Violation.query.get_or_404(violation_id)
 
-    photo_path = os.path.join(
-        current_app.config["UPLOAD_FOLDER"],
-        os.path.basename(violation.photo_url),
-    )
-    if os.path.exists(photo_path):
-        os.remove(photo_path)
+    # Cloudinary'den sil
+    public_id = getattr(violation, "photo_public_id", None)
+    if public_id:
+        try:
+            cloudinary.config(
+                cloud_name=current_app.config["CLOUDINARY_CLOUD_NAME"],
+                api_key=current_app.config["CLOUDINARY_API_KEY"],
+                api_secret=current_app.config["CLOUDINARY_API_SECRET"],
+            )
+            cloudinary.uploader.destroy(public_id)
+        except Exception:
+            pass
 
     db.session.delete(violation)
     db.session.commit()
@@ -247,19 +294,19 @@ def stats():
     total_vehicles = Vehicle.query.count()
     total_violations = Violation.query.count()
 
-    # Violation type distribution
-    all_violations = Violation.query.all()
-    type_dist = {"phone": 0, "smoking": 0, "no_seatbelt": 0, "speed": 0}
-    for v in all_violations:
-        vt = v.violation_type or {}
-        if vt.get("phone"):
-            type_dist["phone"] += 1
-        if vt.get("smoking"):
-            type_dist["smoking"] += 1
-        if vt.get("no_seatbelt"):
-            type_dist["no_seatbelt"] += 1
-        if v.speed is not None:
-            type_dist["speed"] += 1
+    # Violation type distribution — single aggregate query (no Python loop)
+    dist_row = db.session.query(
+        func.count(case((Violation.violation_type["phone"].astext      == "true", 1))).label("phone"),
+        func.count(case((Violation.violation_type["smoking"].astext    == "true", 1))).label("smoking"),
+        func.count(case((Violation.violation_type["no_seatbelt"].astext == "true", 1))).label("no_seatbelt"),
+        func.count(Violation.speed).label("speed"),
+    ).one()
+    type_dist = {
+        "phone":       dist_row.phone,
+        "smoking":     dist_row.smoking,
+        "no_seatbelt": dist_row.no_seatbelt,
+        "speed":       dist_row.speed,
+    }
 
     # Violations per day — last 7 days
     today = datetime.now(timezone.utc).date()

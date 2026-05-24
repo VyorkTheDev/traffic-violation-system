@@ -1,25 +1,12 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import VerifyOTP from './pages/VerifyOTP'
 import CitizenDashboard from './pages/CitizenDashboard'
 import PoliceDashboard from './pages/PoliceDashboard'
 import AdminPanel from './pages/AdminPanel'
-
-// ---------------------------------------------------------------------------
-// Auth helpers
-// ---------------------------------------------------------------------------
-function getUser() {
-  try {
-    const raw = localStorage.getItem('user')
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
-
-function isAuthenticated() {
-  return !!localStorage.getItem('token') && !!getUser()
-}
+import { getUser, isAuthenticated } from './utils/auth'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // ---------------------------------------------------------------------------
 // ProtectedRoute
@@ -62,48 +49,40 @@ function RootRedirect() {
 // ---------------------------------------------------------------------------
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Root */}
-        <Route path="/" element={<RootRedirect />} />
-
-        {/* Public */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-
-        {/* Citizen */}
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute allowedRoles={['citizen', 'police', 'admin']}>
-              <CitizenDashboard />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Police */}
-        <Route
-          path="/police"
-          element={
-            <ProtectedRoute allowedRoles={['police', 'admin']}>
-              <PoliceDashboard />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Admin */}
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminPanel />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<RootRedirect />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/verify-otp" element={<VerifyOTP />} />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute allowedRoles={['citizen', 'police', 'admin']}>
+                  <CitizenDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/police"
+              element={
+                <ProtectedRoute allowedRoles={['police', 'admin']}>
+                  <PoliceDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminPanel />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+    </ErrorBoundary>
   )
 }

@@ -3,94 +3,17 @@ import { useNavigate } from 'react-router-dom'
 import {
   ShieldCheck, LogOut, Car, Plus, Trash2, ChevronRight, Search,
   MapPin, Gauge, Calendar, Phone, Cigarette, AlertTriangle,
-  X, CheckCircle2, XCircle, Clock, Loader2, RefreshCw,
+  CheckCircle2, XCircle, X, Loader2, RefreshCw,
   Upload, Camera, Edit2, FileText, LayoutList, Eye,
 } from 'lucide-react'
 import { vehicles as vehiclesApi, violations as violationsApi, police as policeApi, BASE_URL } from '../services/api'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function getUser() {
-  try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
-}
-
-function formatPlate(plate) {
-  if (!plate) return plate
-  return plate.replace(/^(\d+)([A-Z]+)(\d+)$/, '$1 $2 $3')
-}
-
-function fmtDate(iso) {
-  return new Date(iso).toLocaleString('tr-TR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
-
-const AI_STATUS = {
-  pending:    { label: 'Bekliyor',    color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
-  processing: { label: 'İşleniyor',  color: 'text-blue-400   bg-blue-400/10   border-blue-400/30'   },
-  completed:  { label: 'Tamamlandı', color: 'text-green-400  bg-green-400/10  border-green-400/30'  },
-  failed:     { label: 'Başarısız',  color: 'text-red-400    bg-red-400/10    border-red-400/30'    },
-}
-
-function AiBadge({ status }) {
-  const s = AI_STATUS[status] || AI_STATUS.pending
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${s.color}`}>
-      {status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}
-      {status === 'pending'    && <Clock className="w-3 h-3" />}
-      {status === 'completed'  && <CheckCircle2 className="w-3 h-3" />}
-      {status === 'failed'     && <XCircle className="w-3 h-3" />}
-      {s.label}
-    </span>
-  )
-}
-
-function ViolationPills({ vt, speed, speedLimit }) {
-  const pills = []
-  if (vt?.phone)       pills.push({ icon: <Phone className="w-3 h-3" />,        label: 'Telefon',   cls: 'bg-red-500/20 text-red-300 border-red-500/30' })
-  if (vt?.smoking)     pills.push({ icon: <Cigarette className="w-3 h-3" />,    label: 'Sigara',    cls: 'bg-orange-500/20 text-orange-300 border-orange-500/30' })
-  if (vt?.no_seatbelt) pills.push({ icon: <AlertTriangle className="w-3 h-3" />, label: 'Kemer',    cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' })
-  if (speed != null && speedLimit != null && speed > speedLimit)
-    pills.push({ icon: <Gauge className="w-3 h-3" />, label: `${speed} / ${speedLimit} km/h`, cls: 'bg-purple-500/20 text-purple-300 border-purple-500/30' })
-  if (!pills.length)   return <span className="text-xs text-slate-500">—</span>
-  return (
-    <div className="flex flex-wrap gap-1">
-      {pills.map((p, i) => (
-        <span key={i} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${p.cls}`}>
-          {p.icon}{p.label}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Modal
-// ---------------------------------------------------------------------------
-function Modal({ open, onClose, title, children, maxWidth = 'max-w-lg' }) {
-  useEffect(() => {
-    const fn = (e) => e.key === 'Escape' && onClose()
-    if (open) window.addEventListener('keydown', fn)
-    return () => window.removeEventListener('keydown', fn)
-  }, [open, onClose])
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full ${maxWidth} max-h-[90vh] flex flex-col`}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 flex-shrink-0">
-          <h3 className="text-white font-semibold text-lg">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="overflow-y-auto flex-1 p-6">{children}</div>
-      </div>
-    </div>
-  )
-}
+import { getUser } from '../utils/auth'
+import { fmtDate } from '../utils/format'
+import { formatPlate, normalizePlate, normalizePlateInput, validatePlate } from '../utils/plate'
+import Modal from '../components/Modal'
+import AiBadge from '../components/AiBadge'
+import ViolationPills from '../components/ViolationPills'
+import PlateInput from '../components/PlateInput'
 
 function InfoBox({ icon, label, value }) {
   return (
@@ -312,12 +235,15 @@ function AddVehicleForm({ onAdded, onCancel }) {
 
   async function submit(e) {
     e.preventDefault()
-    if (!form.plate.trim() || !form.brand.trim() || !form.model.trim() || !form.year) { setError('Tüm alanlar zorunludur.'); return }
+    const plateNorm = normalizePlate(form.plate)
+    const plateErr  = validatePlate(plateNorm)
+    if (plateErr) { setError(plateErr); return }
+    if (!form.brand.trim() || !form.model.trim() || !form.year) { setError('Tüm alanlar zorunludur.'); return }
     const year = parseInt(form.year)
     if (isNaN(year) || year < 1900 || year > new Date().getFullYear() + 1) { setError('Geçerli bir yıl girin.'); return }
     setLoading(true)
     try {
-      const res = await vehiclesApi.addVehicle(form.plate.toUpperCase(), form.brand, form.model, year)
+      const res = await vehiclesApi.addVehicle(plateNorm, form.brand, form.model, year)
       onAdded(res.data.data)
     } catch (err) { setError(err.response?.data?.message || 'Araç eklenemedi.')
     } finally { setLoading(false) }
@@ -326,7 +252,7 @@ function AddVehicleForm({ onAdded, onCancel }) {
   return (
     <form onSubmit={submit} className="space-y-4">
       {error && <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2.5 text-red-300 text-sm"><XCircle className="w-4 h-4 flex-shrink-0" />{error}</div>}
-      <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Plaka</label><input name="plate" value={form.plate} onChange={e => { setForm({...form, plate: e.target.value}); setError('') }} placeholder="34 ABC 123" className={inputCls} /></div>
+      <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Plaka</label><PlateInput value={form.plate} onChange={v => { setForm({...form, plate: v}); setError('') }} className={inputCls} /></div>
       <div className="grid grid-cols-2 gap-3">
         <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Marka</label><input name="brand" value={form.brand} onChange={e => { setForm({...form, brand: e.target.value}); setError('') }} placeholder="Toyota" className={inputCls} /></div>
         <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Model</label><input name="model" value={form.model} onChange={e => { setForm({...form, model: e.target.value}); setError('') }} placeholder="Corolla" className={inputCls} /></div>
@@ -488,13 +414,15 @@ function TabReport() {
   async function handleSubmit(e) {
     e.preventDefault()
     if (!photo) { setError('Fotoğraf zorunludur.'); return }
-    if (!form.plate.trim()) { setError('Plaka zorunludur.'); return }
+    const plateNorm = normalizePlate(form.plate)
+    const plateErr  = validatePlate(plateNorm)
+    if (plateErr) { setError(plateErr); return }
     if (!form.location.trim()) { setError('Konum zorunludur.'); return }
 
     setLoading(true); setError(''); setResult(null)
     const fd = new FormData()
     fd.append('photo', photo)
-    fd.append('plate', form.plate.trim().toUpperCase())
+    fd.append('plate', plateNorm)
     fd.append('location', form.location.trim())
     if (form.speed) fd.append('speed', form.speed)
     if (form.speed_limit != null) fd.append('speed_limit', form.speed_limit)
@@ -503,10 +431,12 @@ function TabReport() {
 
     try {
       const res = await violationsApi.createViolation(fd)
-      setResult(res.data.data)
-      setForm({ plate: '', speed: '', location: '', latitude: null, longitude: null, speed_limit: null })
-      setSpeedSource(null)
-      setPhoto(null); setPreview(null)
+      if (res.status === 201) {
+        setResult(res.data.data)
+        setForm({ plate: '', speed: '', location: '', latitude: null, longitude: null, speed_limit: null })
+        setSpeedSource(null)
+        setPhoto(null); setPreview(null)
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'İhlal kaydedilemedi.')
     } finally { setLoading(false) }
@@ -521,9 +451,8 @@ function TabReport() {
         <p className="text-sm text-slate-400 mt-0.5">Fotoğraf yükleyin, AI otomatik analiz eder</p>
       </div>
 
-      {/* Success result */}
-      {result && (
-        <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-5 mb-6">
+      {result ? (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-5">
           <div className="flex items-center gap-2 mb-3">
             <CheckCircle2 className="w-5 h-5 text-green-400" />
             <p className="text-green-300 font-semibold">İhlal kaydedildi! AI analizi başlatıldı.</p>
@@ -534,14 +463,21 @@ function TabReport() {
             <span className="text-slate-400">AI Durum:</span><AiBadge status={result.ai_status} />
           </div>
           <p className="text-xs text-slate-500 mt-3">AI analizi arka planda devam ediyor. "Raporlarım" sekmesinden durumu takip edin.</p>
+          <button
+            type="button"
+            onClick={() => setResult(null)}
+            className="mt-4 flex items-center gap-2 text-sm text-amber-400 hover:text-amber-300 font-medium transition"
+          >
+            <Plus className="w-4 h-4" />Yeni İhlal Bildir
+          </button>
         </div>
-      )}
-
-      {error && (
-        <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 mb-5 text-red-300 text-sm">
-          <XCircle className="w-4 h-4 flex-shrink-0" />{error}
-        </div>
-      )}
+      ) : (
+        <>
+          {error && (
+            <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 mb-5 text-red-300 text-sm">
+              <XCircle className="w-4 h-4 flex-shrink-0" />{error}
+            </div>
+          )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Photo upload */}
@@ -575,8 +511,7 @@ function TabReport() {
         {/* Plate */}
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1.5">Plaka *</label>
-          <input value={form.plate} onChange={e => { setForm({...form, plate: e.target.value}); setError('') }}
-            placeholder="34 ABC 123" className={inputCls} />
+          <PlateInput value={form.plate} onChange={v => { setForm({...form, plate: v}); setError('') }} className={inputCls} />
         </div>
 
         {/* Location */}
@@ -620,6 +555,8 @@ function TabReport() {
           {loading ? <><Loader2 className="w-5 h-5 animate-spin" />Kaydediliyor...</> : <><Camera className="w-5 h-5" />İhlali Kaydet & AI Analiz Başlat</>}
         </button>
       </form>
+        </>
+      )}
     </div>
   )
 }
@@ -820,7 +757,7 @@ function TabSearch() {
     if (!query.trim()) return
     setLoading(true); setError(''); setResults(null)
     try {
-      const res = await policeApi.searchByPlate(query.trim())
+      const res = await policeApi.searchByPlate(normalizePlate(query))
       setResults(res.data.data || [])
     } catch (err) {
       if (err.response?.status === 404) setError(`"${query.toUpperCase()}" ile eşleşen araç bulunamadı.`)
@@ -840,7 +777,7 @@ function TabSearch() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input
             value={query}
-            onChange={e => { setQuery(e.target.value); setError('') }}
+            onChange={e => { setQuery(normalizePlateInput(e.target.value)); setError('') }}
             placeholder="Plaka ara… (örn: 34, 34AB)"
             className="w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-500 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition"
           />
@@ -876,6 +813,20 @@ function TabSearch() {
                 <span className={`text-xs font-medium px-3 py-1 rounded-full border ${vehicle.violations?.length > 0 ? 'bg-red-500/10 text-red-300 border-red-500/30' : 'bg-green-500/10 text-green-300 border-green-500/30'}`}>
                   {vehicle.violations?.length || 0} ihlal
                 </span>
+                {vehicle.owner && (
+                  <div className="flex items-center gap-2 ml-2">
+                    <span className={`text-xs font-medium px-3 py-1 rounded-full border ${
+                      vehicle.owner.license_status === 'suspended'
+                        ? 'bg-red-500/10 text-red-300 border-red-500/30'
+                        : 'bg-green-500/10 text-green-300 border-green-500/30'
+                    }`}>
+                      {vehicle.owner.license_status === 'suspended' ? 'Ehliyet: Askıda' : 'Ehliyet: Geçerli'}
+                    </span>
+                    <span className="text-xs font-medium px-3 py-1 rounded-full border bg-blue-500/10 text-blue-300 border-blue-500/30">
+                      {vehicle.owner.points ?? 100} puan
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Violations list */}

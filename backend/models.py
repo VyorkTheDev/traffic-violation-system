@@ -13,6 +13,13 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)  # bcrypt hash
     role = db.Column(db.Enum("citizen", "police", "admin", name="user_role"), nullable=False, default="citizen")
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    points = db.Column(db.Integer, nullable=False, default=100)
+    license_status = db.Column(db.String(20), nullable=False, default="valid")
+
+    # E-posta OTP doğrulama alanları
+    is_verified    = db.Column(db.Boolean, nullable=False, default=False)
+    otp_code       = db.Column(db.String(6),  nullable=True)
+    otp_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     vehicles = db.relationship("Vehicle", backref="owner", lazy=True)
     violations_created = db.relationship("Violation", backref="creator", lazy=True)
@@ -24,11 +31,17 @@ class User(db.Model):
             "email": self.email,
             "role": self.role,
             "created_at": self.created_at.isoformat(),
+            "points": self.points,
+            "license_status": self.license_status,
+            "is_verified": self.is_verified,
         }
 
 
 class Vehicle(db.Model):
     __tablename__ = "vehicles"
+    __table_args__ = (
+        db.Index("ix_vehicles_owner_id", "owner_id"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     plate = db.Column(db.String(20), unique=True, nullable=False)
@@ -54,6 +67,11 @@ class Vehicle(db.Model):
 
 class Violation(db.Model):
     __tablename__ = "violations"
+    __table_args__ = (
+        db.Index("ix_violations_plate",      "plate"),
+        db.Index("ix_violations_created_by", "created_by"),
+        db.Index("ix_violations_ai_status",  "ai_status"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     vehicle_id = db.Column(db.Integer, db.ForeignKey("vehicles.id"), nullable=True)
@@ -96,3 +114,15 @@ class Violation(db.Model):
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat(),
         }
+
+    def to_dict_with_vehicle(self):
+        """İhlal verisine araç bilgisini (plate, brand, model, year) ekler."""
+        d = self.to_dict()
+        if self.vehicle:
+            d["vehicle"] = {
+                "plate": self.vehicle.plate,
+                "brand": self.vehicle.brand,
+                "model": self.vehicle.model,
+                "year":  self.vehicle.year,
+            }
+        return d

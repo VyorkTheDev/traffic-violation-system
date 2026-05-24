@@ -3,88 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import {
   ShieldCheck, LogOut, Car, Plus, Trash2, ChevronRight,
   MapPin, Gauge, Calendar, Phone, Cigarette, AlertTriangle,
-  X, CheckCircle2, XCircle, Clock, Loader2, RefreshCw,
+  CheckCircle2, XCircle, Loader2, RefreshCw,
 } from 'lucide-react'
-import { vehicles as vehiclesApi, violations as violationsApi, BASE_URL } from '../services/api'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function getUser() {
-  try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
-}
-
-function fmtDate(iso) {
-  return new Date(iso).toLocaleString('tr-TR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
-
-const AI_STATUS = {
-  pending:    { label: 'Bekliyor',   color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
-  processing: { label: 'İşleniyor', color: 'text-blue-400   bg-blue-400/10   border-blue-400/30'   },
-  completed:  { label: 'Tamamlandı',color: 'text-green-400  bg-green-400/10  border-green-400/30'  },
-  failed:     { label: 'Başarısız', color: 'text-red-400    bg-red-400/10    border-red-400/30'    },
-}
-
-function AiStatusBadge({ status }) {
-  const s = AI_STATUS[status] || AI_STATUS.pending
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${s.color}`}>
-      {status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}
-      {status === 'pending'    && <Clock className="w-3 h-3" />}
-      {status === 'completed'  && <CheckCircle2 className="w-3 h-3" />}
-      {status === 'failed'     && <XCircle className="w-3 h-3" />}
-      {s.label}
-    </span>
-  )
-}
-
-function ViolationTypePills({ vt, speed }) {
-  const pills = []
-  if (vt?.phone)       pills.push({ icon: <Phone className="w-3 h-3" />,       label: 'Telefon',   color: 'bg-red-500/20 text-red-300 border-red-500/30' })
-  if (vt?.smoking)     pills.push({ icon: <Cigarette className="w-3 h-3" />,   label: 'Sigara',    color: 'bg-orange-500/20 text-orange-300 border-orange-500/30' })
-  if (vt?.no_seatbelt) pills.push({ icon: <AlertTriangle className="w-3 h-3" />,label: 'Kemer Yok',color: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' })
-  if (speed != null)   pills.push({ icon: <Gauge className="w-3 h-3" />,        label: `${speed} km/h`, color: 'bg-purple-500/20 text-purple-300 border-purple-500/30' })
-  if (!pills.length)   return <span className="text-xs text-slate-500">—</span>
-  return (
-    <div className="flex flex-wrap gap-1">
-      {pills.map((p, i) => (
-        <span key={i} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${p.color}`}>
-          {p.icon}{p.label}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Modal wrapper
-// ---------------------------------------------------------------------------
-function Modal({ open, onClose, title, children }) {
-  useEffect(() => {
-    const fn = (e) => e.key === 'Escape' && onClose()
-    if (open) window.addEventListener('keydown', fn)
-    return () => window.removeEventListener('keydown', fn)
-  }, [open, onClose])
-
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 flex-shrink-0">
-          <h3 className="text-white font-semibold text-lg">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1 rounded-lg hover:bg-slate-700">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="overflow-y-auto flex-1 p-6">{children}</div>
-      </div>
-    </div>
-  )
-}
+import { vehicles as vehiclesApi, violations as violationsApi } from '../services/api'
+import { getUser } from '../utils/auth'
+import { fmtDate } from '../utils/format'
+import { normalizePlate, validatePlate } from '../utils/plate'
+import Modal from '../components/Modal'
+import AiBadge from '../components/AiBadge'
+import ViolationPills from '../components/ViolationPills'
+import PlateInput from '../components/PlateInput'
 
 // ---------------------------------------------------------------------------
 // Add Vehicle Modal
@@ -101,7 +29,10 @@ function AddVehicleModal({ open, onClose, onAdded }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.plate.trim() || !form.brand.trim() || !form.model.trim() || !form.year) {
+    const plateNorm = normalizePlate(form.plate)
+    const plateErr  = validatePlate(plateNorm)
+    if (plateErr) { setError(plateErr); return }
+    if (!form.brand.trim() || !form.model.trim() || !form.year) {
       setError('Tüm alanlar zorunludur.')
       return
     }
@@ -112,7 +43,7 @@ function AddVehicleModal({ open, onClose, onAdded }) {
     }
     setLoading(true)
     try {
-      const res = await vehiclesApi.addVehicle(form.plate.trim().toUpperCase(), form.brand.trim(), form.model.trim(), year)
+      const res = await vehiclesApi.addVehicle(plateNorm, form.brand.trim(), form.model.trim(), year)
       onAdded(res.data.data)
       setForm({ plate: '', brand: '', model: '', year: '' })
       onClose()
@@ -135,7 +66,7 @@ function AddVehicleModal({ open, onClose, onAdded }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm text-slate-300 mb-1.5 font-medium">Plaka</label>
-          <input name="plate" value={form.plate} onChange={handleChange} placeholder="34 ABC 123" className={inputCls} />
+          <PlateInput value={form.plate} onChange={v => { setForm({ ...form, plate: v }); setError('') }} className={inputCls} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -213,7 +144,7 @@ function ViolationDetailModal({ violation, open, onClose }) {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">AI Analiz Sonuçları</h4>
-            <AiStatusBadge status={violation.ai_status} />
+            <AiBadge status={violation.ai_status} />
           </div>
           {violation.ai_status === 'completed' ? (
             <div className="space-y-2">
@@ -473,9 +404,9 @@ export default function CitizenDashboard() {
                             </div>
                           </td>
                           <td className="px-5 py-4">
-                            <ViolationTypePills vt={v.violation_type} speed={v.speed} />
+                            <ViolationPills vt={v.violation_type} speed={v.speed} />
                           </td>
-                          <td className="px-5 py-4"><AiStatusBadge status={v.ai_status} /></td>
+                          <td className="px-5 py-4"><AiBadge status={v.ai_status} /></td>
                           <td className="px-5 py-4 text-right">
                             <ChevronRight className="w-4 h-4 text-slate-600 inline-block" />
                           </td>
@@ -495,7 +426,7 @@ export default function CitizenDashboard() {
                     >
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs text-slate-500 font-mono">#{v.id}</span>
-                        <AiStatusBadge status={v.ai_status} />
+                        <AiBadge status={v.ai_status} />
                       </div>
                       <div className="flex items-center gap-1.5 text-sm text-slate-300 mb-1">
                         <Calendar className="w-3.5 h-3.5 text-slate-500" />
@@ -505,7 +436,7 @@ export default function CitizenDashboard() {
                         <MapPin className="w-3.5 h-3.5 text-slate-600" />
                         {v.location}
                       </div>
-                      <ViolationTypePills vt={v.violation_type} speed={v.speed} />
+                      <ViolationPills vt={v.violation_type} speed={v.speed} />
                     </div>
                   ))}
                 </div>

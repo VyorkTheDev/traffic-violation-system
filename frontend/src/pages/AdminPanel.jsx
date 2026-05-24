@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Car, FileWarning, LogOut, ShieldCheck,
   Menu, X, Plus, Trash2, Edit2, ChevronUp, ChevronDown,
-  Phone, Cigarette, AlertTriangle, Gauge, Eye,
-  CheckCircle2, XCircle, Clock, Loader2, RefreshCw,
+  Eye, CheckCircle2, XCircle, Loader2, RefreshCw,
   TrendingUp, MapPin, Calendar, ChevronRight,
 } from 'lucide-react'
 import {
@@ -12,86 +11,33 @@ import {
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend,
 } from 'recharts'
 import { admin as adminApi, BASE_URL } from '../services/api'
+import { getUser } from '../utils/auth'
+import { fmtDate, fmtDateShort } from '../utils/format'
+import { normalizePlate, validatePlate } from '../utils/plate'
+import Modal from '../components/Modal'
+import AiBadge from '../components/AiBadge'
+import ViolationPills from '../components/ViolationPills'
+import PlateInput from '../components/PlateInput'
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Admin-specific helpers
 // ---------------------------------------------------------------------------
-function getUser() {
-  try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
-}
-function fmtDate(iso) {
-  return new Date(iso).toLocaleString('tr-TR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
-}
-function fmtDateShort(iso) {
-  return new Date(iso).toLocaleDateString('tr-TR', { day:'2-digit', month:'2-digit', year:'numeric' })
-}
-
 const ROLE_CFG = {
-  citizen: { label:'Vatandaş', cls:'bg-blue-500/20 text-blue-300 border-blue-500/30' },
-  police:  { label:'Polis',    cls:'bg-amber-500/20 text-amber-300 border-amber-500/30' },
-  admin:   { label:'Admin',    cls:'bg-purple-500/20 text-purple-300 border-purple-500/30' },
-}
-const AI_CFG = {
-  pending:    { label:'Bekliyor',    cls:'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
-  processing: { label:'İşleniyor',  cls:'text-blue-400 bg-blue-400/10 border-blue-400/30' },
-  completed:  { label:'Tamamlandı', cls:'text-green-400 bg-green-400/10 border-green-400/30' },
-  failed:     { label:'Başarısız',  cls:'text-red-400 bg-red-400/10 border-red-400/30' },
+  citizen: { label: 'Vatandaş', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  police:  { label: 'Polis',    cls: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+  admin:   { label: 'Admin',    cls: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
 }
 
 function RoleBadge({ role }) {
   const c = ROLE_CFG[role] || ROLE_CFG.citizen
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${c.cls}`}>{c.label}</span>
 }
-function AiBadge({ status }) {
-  const c = AI_CFG[status] || AI_CFG.pending
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${c.cls}`}>
-      {status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}
-      {status === 'pending'    && <Clock className="w-3 h-3" />}
-      {status === 'completed'  && <CheckCircle2 className="w-3 h-3" />}
-      {status === 'failed'     && <XCircle className="w-3 h-3" />}
-      {c.label}
-    </span>
-  )
-}
-function ViolationPills({ vt, speed }) {
-  const pills = []
-  if (vt?.phone)       pills.push({ icon:<Phone className="w-3 h-3" />,         label:'Telefon', cls:'bg-red-500/20 text-red-300 border-red-500/30' })
-  if (vt?.smoking)     pills.push({ icon:<Cigarette className="w-3 h-3" />,     label:'Sigara',  cls:'bg-orange-500/20 text-orange-300 border-orange-500/30' })
-  if (vt?.no_seatbelt) pills.push({ icon:<AlertTriangle className="w-3 h-3" />, label:'Kemer',   cls:'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' })
-  if (speed != null)   pills.push({ icon:<Gauge className="w-3 h-3" />,          label:`${speed}km/h`, cls:'bg-purple-500/20 text-purple-300 border-purple-500/30' })
-  if (!pills.length) return <span className="text-xs text-slate-500">—</span>
-  return <div className="flex flex-wrap gap-1">{pills.map((p,i)=>(
-    <span key={i} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${p.cls}`}>{p.icon}{p.label}</span>
-  ))}</div>
-}
 
 // ---------------------------------------------------------------------------
-// Shared: Modal, SortIcon, Th, ConfirmDelete, inputCls
+// Shared: SortIcon, Th, inputCls
 // ---------------------------------------------------------------------------
 const inputCls = "w-full bg-slate-700/50 border border-slate-600 text-white placeholder-slate-500 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
 const selectCls = inputCls + " cursor-pointer"
-
-function Modal({ open, onClose, title, children, maxWidth='max-w-lg' }) {
-  useEffect(()=>{
-    const fn = e => e.key==='Escape' && onClose()
-    if (open) window.addEventListener('keydown', fn)
-    return () => window.removeEventListener('keydown', fn)
-  },[open, onClose])
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full ${maxWidth} max-h-[90vh] flex flex-col`}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 flex-shrink-0">
-          <h3 className="text-white font-semibold text-lg">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="overflow-y-auto flex-1 p-6">{children}</div>
-      </div>
-    </div>
-  )
-}
 
 function SortIcon({ col, sortKey, dir }) {
   if (sortKey !== col) return <ChevronUp className="w-3 h-3 opacity-20" />
@@ -513,10 +459,13 @@ function AddVehicleForm({ users, onAdded, onCancel }) {
 
   async function submit(e) {
     e.preventDefault()
-    if (!form.plate.trim()||!form.brand.trim()||!form.model.trim()||!form.year||!form.owner_id) { setError('Tüm alanlar zorunludur.'); return }
+    const plateNorm = normalizePlate(form.plate)
+    const plateErr  = validatePlate(plateNorm)
+    if (plateErr) { setError(plateErr); return }
+    if (!form.brand.trim()||!form.model.trim()||!form.year||!form.owner_id) { setError('Tüm alanlar zorunludur.'); return }
     setLoading(true)
     try {
-      const res = await adminApi.createVehicle(form.plate.toUpperCase(), form.brand, form.model, parseInt(form.year), parseInt(form.owner_id))
+      const res = await adminApi.createVehicle(plateNorm, form.brand, form.model, parseInt(form.year), parseInt(form.owner_id))
       onAdded(res.data.data)
     } catch(err) { setError(err.response?.data?.message||'Araç eklenemedi.')
     } finally { setLoading(false) }
@@ -525,7 +474,7 @@ function AddVehicleForm({ users, onAdded, onCancel }) {
   return (
     <form onSubmit={submit} className="space-y-4">
       {error && <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2.5 text-red-300 text-sm"><XCircle className="w-4 h-4 flex-shrink-0" />{error}</div>}
-      <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Plaka</label><input value={form.plate} onChange={e=>set('plate',e.target.value)} className={inputCls} placeholder="34 ABC 123" /></div>
+      <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Plaka</label><PlateInput value={form.plate} onChange={v=>set('plate',v)} className={inputCls} /></div>
       <div className="grid grid-cols-2 gap-3">
         <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Marka</label><input value={form.brand} onChange={e=>set('brand',e.target.value)} className={inputCls} placeholder="Toyota" /></div>
         <div><label className="block text-sm text-slate-300 mb-1.5 font-medium">Model</label><input value={form.model} onChange={e=>set('model',e.target.value)} className={inputCls} placeholder="Corolla" /></div>

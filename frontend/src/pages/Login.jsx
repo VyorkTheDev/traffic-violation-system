@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { ShieldCheck, Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { auth } from '../services/api'
+import { saveAuth } from '../utils/auth'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -34,15 +35,19 @@ export default function Login() {
       const res = await auth.login(form.username.trim(), form.password)
       const { token, user } = res.data.data
 
-      localStorage.setItem('token', token)
-      localStorage.setItem('user', JSON.stringify(user))
+      saveAuth(token, user)
 
-      // Role-based redirect
       if (user.role === 'admin') navigate('/admin', { replace: true })
       else if (user.role === 'police') navigate('/police', { replace: true })
       else navigate('/dashboard', { replace: true })
     } catch (err) {
-      setError(err.response?.data?.message || 'Giriş başarısız. Bilgilerinizi kontrol edin.')
+      const msg = err.response?.data?.message || 'Giriş başarısız. Bilgilerinizi kontrol edin.'
+      // E-posta doğrulanmamışsa OTP sayfasına yönlendir
+      if (err.response?.status === 403 && msg.includes('doğrulanmamış')) {
+        navigate('/verify-otp', { state: { email: form.username.includes('@') ? form.username : '', emailSent: false } })
+        return
+      }
+      setError(msg)
     } finally {
       setLoading(false)
     }

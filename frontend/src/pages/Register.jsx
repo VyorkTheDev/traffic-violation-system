@@ -69,8 +69,10 @@ export default function Register() {
     setError('')
 
     try {
-      await auth.register(form.username.trim(), form.email.trim(), form.password)
-      navigate('/login', { state: { successMsg: 'Kayıt başarılı! Şimdi giriş yapabilirsiniz.' } })
+      const res = await auth.register(form.username.trim(), form.email.trim(), form.password)
+      const email = res.data?.data?.email || form.email.trim()
+      const emailSent = res.data?.data?.email_sent !== false
+      navigate('/verify-otp', { state: { email, emailSent } })
     } catch (err) {
       setError(err.response?.data?.message || 'Kayıt başarısız. Lütfen tekrar deneyin.')
     } finally {
