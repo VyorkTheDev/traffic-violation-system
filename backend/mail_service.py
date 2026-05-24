@@ -1,37 +1,44 @@
 """
-mail_service.py — Resend HTTP API ile e-posta gönderme servisi.
+mail_service.py — Brevo (HTTP API) e-posta gönderme servisi.
 
-Render gibi SMTP portlarını (587/465) engelleyen ortamlarda çalışır.
+Render gibi SMTP portlarını engelleyen ortamlarda çalışır.
 Tüm kimlik bilgileri os.getenv üzerinden okunur; sabit değer içermez.
 """
 
 import os
 import logging
-import resend
+import httpx
 
 logger = logging.getLogger(__name__)
+
+_BREVO_URL = "https://api.brevo.com/v3/smtp/email"
 
 
 def _cfg():
     return {
-        "api_key":  os.getenv("RESEND_API_KEY"),
-        "from":     os.getenv("MAIL_FROM", "Traffic Enforcement <onboarding@resend.dev>"),
-        "frontend": os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/"),
+        "api_key":    os.getenv("BREVO_API_KEY"),
+        "mail_from":  os.getenv("MAIL_USERNAME", "trafficenforcementsystem@gmail.com"),
+        "frontend":   os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/"),
     }
 
 
 def _send(to: str, subject: str, html: str) -> None:
     cfg = _cfg()
     if not cfg["api_key"]:
-        raise RuntimeError("RESEND_API_KEY ortam değişkeni eksik.")
+        raise RuntimeError("BREVO_API_KEY ortam değişkeni eksik.")
 
-    resend.api_key = cfg["api_key"]
-    resend.Emails.send({
-        "from":    cfg["from"],
-        "to":      [to],
-        "subject": subject,
-        "html":    html,
-    })
+    resp = httpx.post(
+        _BREVO_URL,
+        headers={"api-key": cfg["api_key"], "content-type": "application/json"},
+        json={
+            "sender":      {"name": "Traffic Enforcement", "email": cfg["mail_from"]},
+            "to":          [{"email": to}],
+            "subject":     subject,
+            "htmlContent": html,
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
     logger.info("E-posta gönderildi → %s | konu: %s", to, subject)
 
 

@@ -52,4 +52,3 @@ Werkzeug==3.0.3
 alembic==1.13.1
 gunicorn
 APScheduler
-resend==2.10.0
