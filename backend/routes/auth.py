@@ -53,32 +53,48 @@ def register():
     if len(password) < 6:
         return err("Parola en az 6 karakter olmalıdır")
 
-    if User.query.filter_by(username=username).first():
+    existing_by_username = User.query.filter_by(username=username).first()
+    if existing_by_username and existing_by_username.is_verified:
         return err("Bu kullanıcı adı zaten alınmış", 409)
 
-    if User.query.filter_by(email=email).first():
+    existing_by_email = User.query.filter_by(email=email).first()
+    if existing_by_email and existing_by_email.is_verified:
         return err("Bu e-posta adresi zaten kayıtlı", 409)
 
     otp        = _generate_otp()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=_OTP_TTL_MINUTES)
 
-    try:
-        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        user   = User(
-            username=username,
-            email=email,
-            password=hashed,
-            role="citizen",
-            is_verified=False,
-            otp_code=otp,
-            otp_expires_at=expires_at,
-        )
-        db.session.add(user)
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        logger.exception("Kayıt sırasında DB hatası")
-        return err(f"Kayıt başarısız: {str(e)}", 500)
+    # Doğrulanmamış hesap varsa şifre + OTP güncelle, yeni kayıt açma
+    existing = existing_by_email or existing_by_username
+    if existing and not existing.is_verified:
+        try:
+            existing.password       = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+            existing.otp_code       = otp
+            existing.otp_expires_at = expires_at
+            db.session.commit()
+            user = existing
+        except Exception:
+            db.session.rollback()
+            logger.exception("Kayıt güncellemesinde DB hatası")
+            return err("Kayıt başarısız", 500)
+    else:
+        try:
+            hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+            user   = User(
+                username=username,
+                email=email,
+                password=hashed,
+                role="citizen",
+                is_verified=False,
+                otp_code=otp,
+                otp_expires_at=expires_at,
+            )
+            db.session.add(user)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.exception("Kayıt sırasında DB hatası")
+            return err(f"Kayıt başarısız: {str(e)}", 500)
 
     # E-posta gönderimi — başarısız olursa hesap yine de oluşturulmuş sayılır;
     # kullanıcı /resend-otp ile yeni kod isteyebilir.
