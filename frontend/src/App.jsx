@@ -5,6 +5,7 @@ import VerifyOTP from './pages/VerifyOTP'
 import CitizenDashboard from './pages/CitizenDashboard'
 import PoliceDashboard from './pages/PoliceDashboard'
 import AdminPanel from './pages/AdminPanel'
+import ViolationDetail from './pages/ViolationDetail'
 import { getUser, isAuthenticated } from './utils/auth'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -77,6 +78,14 @@ export default function App() {
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminPanel />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/violations/:id"
+              element={
+                <ProtectedRoute allowedRoles={['citizen', 'police', 'admin']}>
+                  <ViolationDetail />
                 </ProtectedRoute>
               }
             />
