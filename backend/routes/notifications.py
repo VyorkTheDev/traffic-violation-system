@@ -6,7 +6,6 @@ Yalnızca police ve admin rolü çağırabilir.
 """
 
 import logging
-import threading
 
 from flask import Blueprint, request
 from sqlalchemy.orm import joinedload

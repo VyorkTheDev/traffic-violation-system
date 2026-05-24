@@ -64,8 +64,12 @@ def register():
     otp        = _generate_otp()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=_OTP_TTL_MINUTES)
 
-    # Doğrulanmamış hesap varsa şifre + OTP güncelle, yeni kayıt açma
-    existing = existing_by_email or existing_by_username
+    # Doğrulanmamış hesap varsa şifre + OTP güncelle, yeni kayıt açma.
+    # Sadece e-posta eşleşmesi yeterli; username eşleşmesi tek başına yeterli değil
+    # çünkü farklı e-posta ile verify-otp çağrısı yapıldığında kullanıcı bulunamaz.
+    existing = existing_by_email
+    if not existing and existing_by_username and not existing_by_username.is_verified:
+        return err("Bu kullanıcı adı zaten alınmış", 409)
     if existing and not existing.is_verified:
         try:
             existing.password       = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
