@@ -152,6 +152,8 @@ def analyze_violation(app, violation_id: int) -> None:
                     owner = db.session.get(User, violation.vehicle.owner_id)
                     if owner:
                         penalty = sum(5 for v in violation_type.values() if v)
+                        if violation.speed and violation.speed_limit and violation.speed > violation.speed_limit:
+                            penalty += 5
                         if penalty > 0:
                             owner.points = max(0, owner.points - penalty)
                             if owner.points == 0:
