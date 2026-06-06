@@ -413,7 +413,7 @@ export default function CitizenDashboard() {
                             </div>
                           </td>
                           <td className="px-5 py-4">
-                            <ViolationPills vt={v.violation_type} speed={v.speed} />
+                            <ViolationPills vt={v.violation_type} speed={v.speed} speedLimit={v.speed_limit} />
                           </td>
                           <td className="px-5 py-4"><AiBadge status={v.ai_status} /></td>
                           <td className="px-5 py-4 text-right">
@@ -445,7 +445,7 @@ export default function CitizenDashboard() {
                         <MapPin className="w-3.5 h-3.5 text-slate-600" />
                         {v.location}
                       </div>
-                      <ViolationPills vt={v.violation_type} speed={v.speed} />
+                      <ViolationPills vt={v.violation_type} speed={v.speed} speedLimit={v.speed_limit} />
                     </div>
                   ))}
                 </div>
