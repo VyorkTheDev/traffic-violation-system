@@ -73,6 +73,20 @@ def create_user():
 def delete_user(user_id):
     user = User.query.get_or_404(user_id)
     try:
+        # 1. Bu kullanıcının polis olarak oluşturduğu ihlalleri sil (created_by FK)
+        Violation.query.filter_by(created_by=user.id).delete(synchronize_session=False)
+
+        # 2. Bu kullanıcının araçlarına bağlı ihlalleri sil (vehicle_id FK)
+        vehicle_ids = [v.id for v in user.vehicles]
+        if vehicle_ids:
+            Violation.query.filter(
+                Violation.vehicle_id.in_(vehicle_ids)
+            ).delete(synchronize_session=False)
+
+        # 3. Bu kullanıcının araçlarını sil (owner_id FK)
+        Vehicle.query.filter_by(owner_id=user.id).delete(synchronize_session=False)
+
+        # 4. Kullanıcıyı sil
         db.session.delete(user)
         db.session.commit()
     except Exception as e:
