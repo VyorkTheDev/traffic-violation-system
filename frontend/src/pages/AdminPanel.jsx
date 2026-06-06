@@ -647,7 +647,7 @@ function TabViolations() {
                       <td className="px-4 py-3.5 text-slate-400 text-xs whitespace-nowrap">{fmtDate(v.created_at)}</td>
                       <td className="px-4 py-3.5 font-bold text-white tracking-wider text-xs">{v.plate}</td>
                       <td className="px-4 py-3.5 text-slate-400 text-xs max-w-[130px] truncate">{v.location}</td>
-                      <td className="px-4 py-3.5"><ViolationPills vt={v.violation_type} speed={v.speed} /></td>
+                      <td className="px-4 py-3.5"><ViolationPills vt={v.violation_type} speed={v.speed} speedLimit={v.speed_limit} /></td>
                       <td className="px-4 py-3.5"><AiBadge status={v.ai_status} /></td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center justify-end gap-1">
