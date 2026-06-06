@@ -203,6 +203,7 @@ function TabUsers() {
   const [editRole, setEditRole] = useState(null)
   const [delId, setDelId]     = useState(null)
   const [delLoading, setDelLoading] = useState(false)
+  const [delError, setDelError] = useState(null)
 
   const load = useCallback(()=>{
     setLoading(true)
@@ -212,8 +213,16 @@ function TabUsers() {
 
   async function doDelete(id) {
     setDelLoading(true)
-    try { await adminApi.deleteUser(id); setUsers(p=>p.filter(u=>u.id!==id)) }
-    finally { setDelLoading(false); setDelId(null) }
+    setDelError(null)
+    try {
+      await adminApi.deleteUser(id)
+      setUsers(p => p.filter(u => u.id !== id))
+      setDelId(null)
+    } catch(e) {
+      setDelError(e.response?.data?.error || 'Silme işlemi başarısız.')
+    } finally {
+      setDelLoading(false)
+    }
   }
 
   return (
@@ -280,8 +289,10 @@ function TabUsers() {
       </Modal>
 
       <ConfirmDelete open={!!delId} title="Kullanıcıyı Sil"
-        desc="Bu kullanıcı kalıcı olarak silinecek. Bu işlem geri alınamaz."
-        onConfirm={()=>doDelete(delId)} onCancel={()=>setDelId(null)} loading={delLoading} />
+        desc={delError
+          ? `Hata: ${delError}`
+          : "Bu kullanıcı kalıcı olarak silinecek. Bu işlem geri alınamaz."}
+        onConfirm={()=>doDelete(delId)} onCancel={()=>{ setDelId(null); setDelError(null) }} loading={delLoading} />
     </div>
   )
 }

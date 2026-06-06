@@ -72,27 +72,30 @@ def create_user():
 @role_required("admin")
 def delete_user(user_id):
     user = User.query.get_or_404(user_id)
+    username = user.username
     try:
         # 1. Bu kullanıcının polis olarak oluşturduğu ihlalleri sil (created_by FK)
-        Violation.query.filter_by(created_by=user.id).delete(synchronize_session=False)
+        Violation.query.filter_by(created_by=user.id).delete(synchronize_session="fetch")
 
         # 2. Bu kullanıcının araçlarına bağlı ihlalleri sil (vehicle_id FK)
         vehicle_ids = [v.id for v in user.vehicles]
         if vehicle_ids:
             Violation.query.filter(
                 Violation.vehicle_id.in_(vehicle_ids)
-            ).delete(synchronize_session=False)
+            ).delete(synchronize_session="fetch")
 
         # 3. Bu kullanıcının araçlarını sil (owner_id FK)
-        Vehicle.query.filter_by(owner_id=user.id).delete(synchronize_session=False)
+        Vehicle.query.filter_by(owner_id=user.id).delete(synchronize_session="fetch")
 
-        # 4. Kullanıcıyı sil
+        # 4. Session cache'i temizle, sonra kullanıcıyı sil
+        db.session.expire_all()
+        user = db.session.get(User, user_id)
         db.session.delete(user)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         return err(f"Could not delete user: {str(e)}", 500)
-    return ok(message=f"User '{user.username}' deleted")
+    return ok(message=f"User '{username}' deleted")
 
 
 @admin_bp.route("/users/<int:user_id>/role", methods=["PUT"])
