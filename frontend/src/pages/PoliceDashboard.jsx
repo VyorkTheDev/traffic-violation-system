@@ -280,24 +280,33 @@ function AddVehicleForm({ onAdded, onCancel }) {
 // ---------------------------------------------------------------------------
 // Location Autocomplete (Nominatim)
 // ---------------------------------------------------------------------------
-const SPEED_LIMITS = {
-  // Yol tipleri
-  motorway:      120,
-  trunk:          90,
-  primary:        50,
-  secondary:      50,
-  tertiary:       50,
-  residential:    30,
-  living_street:  30,
-  service:        30,
-  unclassified:   50,
-  // Yerleşim alanı tipleri (Nominatim place sınıfı)
-  suburb:         30,   // mahalle
-  neighbourhood:  30,
-  quarter:        30,
-  village:        50,
-  hamlet:         30,
-  town:           50,
+// Türk Karayolları Trafik Yönetmeliği hız limitleri:
+//   Otoyol: 130 | Bölünmüş yol (dışı): 110 | Şehirlerarası: 90 | Şehir içi: 50
+function getSpeedLimit(item) {
+  const type = item.type
+  const cls  = item.class
+  const addr = item.address || {}
+
+  if (type === 'motorway' || type === 'motorway_link') return 130
+
+  const isUrban = !!(
+    addr.city || addr.town || addr.suburb ||
+    addr.neighbourhood || addr.quarter || addr.borough
+  )
+
+  if (type === 'trunk' || type === 'trunk_link') return isUrban ? 50 : 110
+
+  if (['primary', 'secondary', 'tertiary', 'unclassified'].includes(type))
+    return isUrban ? 50 : 90
+
+  if (['residential', 'living_street', 'service', 'pedestrian'].includes(type))
+    return 50
+
+  // Nominatim place sınıfı (suburb, neighbourhood, city vb.)
+  if (cls === 'place') return 50
+
+  // POI / bina / adres — şehirdeyse 50, aksi hâlde tespit edilemedi
+  return isUrban ? 50 : null
 }
 
 function LocationAutocomplete({ value, onSelect, inputCls }) {
@@ -352,7 +361,7 @@ function LocationAutocomplete({ value, onSelect, inputCls }) {
     setQuery(text)
     setSuggestions([])
     setOpen(false)
-    const speedLimit = SPEED_LIMITS[item.type] ?? null
+    const speedLimit = getSpeedLimit(item)
     onSelect(text, parseFloat(item.lat), parseFloat(item.lon), speedLimit)
   }
 
