@@ -26,12 +26,14 @@ class Config:
     )
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", _local_db)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    # SSL sadece cloud DB (Neon.tech vb.) kullanılırken aktif olur
-    SQLALCHEMY_ENGINE_OPTIONS = (
-        {"connect_args": {"sslmode": "require"}}
-        if os.getenv("DATABASE_URL")
-        else {}
-    )
+    # pool_pre_ping: bağlantı kullanılmadan önce "SELECT 1" ile kontrol eder,
+    # ölü bağlantıyı otomatik yeniler (Neon.tech uyku sonrası stale connection fix).
+    # pool_recycle: 280 sn'de bir bağlantıyı tazeler (Neon'un 300 sn idle timeout'undan önce).
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,
+        "pool_recycle":  280,
+        **({"connect_args": {"sslmode": "require"}} if os.getenv("DATABASE_URL") else {}),
+    }
 
     # JWT
     JWT_SECRET = SECRET_KEY

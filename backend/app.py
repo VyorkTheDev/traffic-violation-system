@@ -58,6 +58,7 @@ def create_app():
 
     @app.get("/health")
     def health():
+        db.session.execute(db.text("SELECT 1"))
         return ok(message="Backend is running")
 
     # Global error handlers
