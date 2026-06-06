@@ -1,5 +1,4 @@
 import logging
-import threading
 
 import cloudinary
 import cloudinary.uploader
@@ -9,7 +8,6 @@ from models import db, Vehicle, Violation, User
 from middleware import token_required, role_required
 from utils import ok, err, normalize_plate, validate_plate
 import ai_service
-import mail_service
 
 logger = logging.getLogger(__name__)
 
@@ -192,37 +190,7 @@ def create_violation():
 
     ai_service.trigger_async(current_app._get_current_object(), violation.id)
 
-    # Araç sahibine bildirim e-postası gönder (hata olursa sadece logla, ihlal kaydı geçerli)
-    _notify_owner_async(vehicle, violation)
-
     return ok(data=violation.to_dict(), message="Violation created, AI analysis started", code=201)
-
-
-def _notify_owner_async(vehicle: Vehicle, violation: Violation) -> None:
-    """Araç sahibine ihlal bildirimini arka planda gönderir; ana isteği bloklamaz."""
-    owner = User.query.get(vehicle.owner_id)
-    if not owner:
-        return
-
-    violation_id = violation.id
-    plate        = violation.plate
-    location     = violation.location
-    email        = owner.email
-    username     = owner.username
-
-    def _send():
-        try:
-            mail_service.send_violation_email(
-                to=email,
-                username=username,
-                violation_id=violation_id,
-                plate=plate,
-                location=location,
-            )
-        except Exception:
-            logger.exception("Otomatik ihlal bildirimi gönderilemedi: violation_id=%d", violation_id)
-
-    threading.Thread(target=_send, daemon=True).start()
 
 
 @violations_bp.route("/<int:violation_id>", methods=["PUT"])

@@ -50,6 +50,9 @@ export const auth = {
 
   resendOtp: (email) =>
     api.post('/auth/resend-otp', { email }),
+
+  me: () =>
+    api.get('/auth/me'),
 }
 
 // ---------------------------------------------------------------------------
@@ -61,9 +64,6 @@ export const vehicles = {
 
   addVehicle: (plate, brand, model, year) =>
     api.post('/vehicles/', { plate, brand, model, year }),
-
-  getVehicle: (id) =>
-    api.get(`/vehicles/${id}`),
 
   deleteVehicle: (id) =>
     api.delete(`/vehicles/${id}`),

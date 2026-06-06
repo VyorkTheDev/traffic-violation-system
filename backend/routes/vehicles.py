@@ -56,24 +56,10 @@ def create_vehicle():
     return ok(data=vehicle.to_dict(), code=201)
 
 
-@vehicles_bp.route("/<int:vehicle_id>", methods=["GET"])
-@token_required
-def get_vehicle(vehicle_id):
-    vehicle = Vehicle.query.get(vehicle_id)
-    if not vehicle:
-        return err("Vehicle not found", 404)
-
-    user = g.current_user
-    if user.role != "admin" and vehicle.owner_id != user.id:
-        return err("Access denied", 403)
-
-    return ok(data=vehicle.to_dict())
-
-
 @vehicles_bp.route("/<int:vehicle_id>", methods=["DELETE"])
 @token_required
 def delete_vehicle(vehicle_id):
-    vehicle = Vehicle.query.get(vehicle_id)
+    vehicle = db.session.get(Vehicle, vehicle_id)
     if not vehicle:
         return err("Vehicle not found", 404)
 

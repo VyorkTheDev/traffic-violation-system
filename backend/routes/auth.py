@@ -4,10 +4,12 @@ from datetime import datetime, timezone, timedelta
 
 import bcrypt
 import jwt
-from flask import Blueprint, request, current_app
+from flask import Blueprint, request, current_app, g
+from sqlalchemy import func
 from models import db, User
 from utils import ok, err
 from extensions import limiter
+from middleware import token_required
 import mail_service
 
 logger = logging.getLogger(__name__)
@@ -53,7 +55,7 @@ def register():
     if len(password) < 6:
         return err("Parola en az 6 karakter olmalıdır")
 
-    existing_by_username = User.query.filter_by(username=username).first()
+    existing_by_username = User.query.filter(func.lower(User.username) == username.lower()).first()
     if existing_by_username and existing_by_username.is_verified:
         return err("Bu kullanıcı adı zaten alınmış", 409)
 
@@ -230,7 +232,7 @@ def login():
     if not username or not password:
         return err("username ve password zorunludur")
 
-    user = User.query.filter_by(username=username).first()
+    user = User.query.filter(func.lower(User.username) == username.lower()).first()
     if not user or not bcrypt.checkpw(password.encode(), user.password.encode()):
         return err("Geçersiz kullanıcı adı veya parola", 401)
 
@@ -244,3 +246,13 @@ def login():
 
     token = _issue_token(user)
     return ok(data={"token": token, "user": user.to_dict()})
+
+
+# ---------------------------------------------------------------------------
+# GÜNCEL KULLANICI BİLGİSİ
+# ---------------------------------------------------------------------------
+
+@auth_bp.route("/me", methods=["GET"])
+@token_required
+def me():
+    return ok(data=g.current_user.to_dict())

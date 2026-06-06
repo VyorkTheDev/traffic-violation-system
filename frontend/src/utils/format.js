@@ -11,5 +11,3 @@ export function fmtDateShort(iso) {
   })
 }
 
-// plate.js'ten re-export — import path'leri kırılmasın diye
-export { formatPlate } from './plate'

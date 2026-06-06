@@ -5,8 +5,8 @@ import {
   MapPin, Gauge, Calendar, Phone, Cigarette, AlertTriangle,
   CheckCircle2, XCircle, Loader2, RefreshCw,
 } from 'lucide-react'
-import { vehicles as vehiclesApi, violations as violationsApi } from '../services/api'
-import { getUser } from '../utils/auth'
+import { vehicles as vehiclesApi, violations as violationsApi, auth as authApi } from '../services/api'
+import { getUser, logout } from '../utils/auth'
 import { fmtDate } from '../utils/format'
 import { normalizePlate, validatePlate } from '../utils/plate'
 import Modal from '../components/Modal'
@@ -176,6 +176,11 @@ function InfoBox({ icon, label, value }) {
 export default function CitizenDashboard() {
   const navigate = useNavigate()
   const user = getUser()
+  const [me, setMe] = useState(user)
+
+  useEffect(() => {
+    authApi.me().then(r => setMe(r.data.data)).catch(() => {})
+  }, [])
 
   const [vehicleList, setVehicleList] = useState([])
   const [loadingVehicles, setLoadingVehicles] = useState(true)
@@ -213,11 +218,7 @@ export default function CitizenDashboard() {
 
   useEffect(() => { loadViolations() }, [loadViolations])
 
-  function handleLogout() {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    navigate('/login', { replace: true })
-  }
+  function handleLogout() { logout(navigate) }
 
   function handleVehicleAdded(vehicle) {
     setVehicleList(prev => [vehicle, ...prev])
@@ -258,11 +259,19 @@ export default function CitizenDashboard() {
             </div>
             <span className="font-semibold text-white hidden sm:block">Trafik İhlal Sistemi</span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-slate-300 hidden sm:block">{user?.username}</span>
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${roleBadge}`}>{roleLabel}</span>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-300 hidden sm:block">{user?.username}</span>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${roleBadge}`}>{roleLabel}</span>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-blue-500/20 text-blue-300 border-blue-500/30 hidden sm:inline-flex">
+              {me?.points ?? 100} Puan
+            </span>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border hidden sm:inline-flex ${
+              me?.license_status === 'suspended'
+                ? 'bg-red-500/20 text-red-300 border-red-500/30'
+                : 'bg-green-500/20 text-green-300 border-green-500/30'
+            }`}>
+              {me?.license_status === 'suspended' ? 'Ehliyet: Askıda' : 'Ehliyet: Geçerli'}
+            </span>
             <button
               onClick={handleLogout}
               className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg transition"

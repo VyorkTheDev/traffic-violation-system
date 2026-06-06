@@ -6,8 +6,8 @@ import {
   CheckCircle2, XCircle, X, Loader2, RefreshCw,
   Upload, Camera, Edit2, FileText, LayoutList, Eye,
 } from 'lucide-react'
-import { vehicles as vehiclesApi, violations as violationsApi, police as policeApi, BASE_URL } from '../services/api'
-import { getUser } from '../utils/auth'
+import { vehicles as vehiclesApi, violations as violationsApi, police as policeApi, auth as authApi } from '../services/api'
+import { getUser, logout } from '../utils/auth'
 import { fmtDate } from '../utils/format'
 import { formatPlate, normalizePlate, normalizePlateInput, validatePlate } from '../utils/plate'
 import Modal from '../components/Modal'
@@ -65,7 +65,16 @@ function ViolationDetailModal({ violation, open, onClose }) {
               <Row icon={<Cigarette className="w-4 h-4" />} label="Sigara İçme" detected={vt.smoking} />
               <Row icon={<AlertTriangle className="w-4 h-4" />} label="Kemer Takmama" detected={vt.no_seatbelt} />
             </div>
-          ) : <p className="text-sm text-slate-500 italic">AI analizi bekleniyor.</p>}
+          ) : violation.ai_status === 'failed' ? (
+            <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2.5">
+              <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+              <p className="text-sm text-red-300">
+                {violation.ai_result?.reason === 'invalid_scene'
+                  ? 'Fotoğraf geçersiz — araç sürücüsü tespit edilemedi.'
+                  : 'AI analizi başarısız.'}
+              </p>
+            </div>
+          ) : <p className="text-sm text-slate-500 italic">AI analizi devam ediyor...</p>}
         </div>
       </div>
     </Modal>
@@ -882,13 +891,14 @@ const TABS = [
 export default function PoliceDashboard() {
   const navigate = useNavigate()
   const user = getUser()
+  const [me, setMe] = useState(user)
   const [activeTab, setActiveTab] = useState('report')
 
-  function handleLogout() {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    navigate('/login', { replace: true })
-  }
+  useEffect(() => {
+    authApi.me().then(r => setMe(r.data.data)).catch(() => {})
+  }, [])
+
+  function handleLogout() { logout(navigate) }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -901,11 +911,19 @@ export default function PoliceDashboard() {
             </div>
             <span className="font-semibold text-white hidden sm:block">Trafik İhlal Sistemi</span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-slate-300 hidden sm:block">{user?.username}</span>
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-amber-500/20 text-amber-300 border-amber-500/30">Polis</span>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-300 hidden sm:block">{user?.username}</span>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-amber-500/20 text-amber-300 border-amber-500/30">Polis</span>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-blue-500/20 text-blue-300 border-blue-500/30 hidden sm:inline-flex">
+              {me?.points ?? 100} Puan
+            </span>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border hidden sm:inline-flex ${
+              me?.license_status === 'suspended'
+                ? 'bg-red-500/20 text-red-300 border-red-500/30'
+                : 'bg-green-500/20 text-green-300 border-green-500/30'
+            }`}>
+              {me?.license_status === 'suspended' ? 'Ehliyet: Askıda' : 'Ehliyet: Geçerli'}
+            </span>
             <button onClick={handleLogout} className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg transition">
               <LogOut className="w-4 h-4" /><span className="hidden sm:block">Çıkış</span>
             </button>

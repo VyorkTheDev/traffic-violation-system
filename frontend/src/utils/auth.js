@@ -10,3 +10,9 @@ export function saveAuth(token, user) {
   localStorage.setItem('token', token)
   localStorage.setItem('user', JSON.stringify(user))
 }
+
+export function logout(navigate) {
+  localStorage.removeItem('token')
+  localStorage.removeItem('user')
+  navigate('/login', { replace: true })
+}

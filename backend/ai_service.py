@@ -9,17 +9,23 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 import anthropic
-from models import db, Violation
+import mail_service
+from models import db, Violation, User
 
 logger = logging.getLogger(__name__)
 
 PROMPT = (
-    "Analyze this traffic photo. Detect if the driver is:\n"
-    "1. Using a phone while driving\n"
-    "2. Smoking while driving\n"
-    "3. Not wearing a seatbelt\n\n"
+    "You are a traffic enforcement AI. Analyze the photo carefully.\n\n"
+    "STEP 1 — Validate the scene:\n"
+    "Confirm that the photo shows a person seated in the DRIVER's seat of a vehicle (steering wheel or dashboard must be visible, or the person must clearly be behind the wheel).\n"
+    "- If the photo does NOT show a vehicle driver (e.g. person outside a car, passenger, interior with no driver, blurry/empty scene), respond ONLY with:\n"
+    '{"valid": false, "phone": false, "smoking": false, "no_seatbelt": false}\n\n'
+    "STEP 2 — Analyze ONLY the driver (not passengers):\n"
+    "1. phone: Is the driver holding a phone to their ear, looking down at a phone, or texting?\n"
+    "2. smoking: Is the driver holding or smoking a cigarette/cigar?\n"
+    "3. no_seatbelt: Is the driver NOT wearing a seatbelt across their chest?\n\n"
     "Respond ONLY with this exact JSON format, no other text:\n"
-    '{"phone": true/false, "smoking": true/false, "no_seatbelt": true/false}'
+    '{"valid": true, "phone": true/false, "smoking": true/false, "no_seatbelt": true/false}'
 )
 
 MEDIA_TYPES = {
@@ -73,6 +79,7 @@ def _parse_ai_response(text: str) -> dict:
         parsed = json.loads(m.group())
 
     result = {
+        "valid":       bool(parsed.get("valid", True)),
         "phone":       bool(parsed.get("phone",       False)),
         "smoking":     bool(parsed.get("smoking",     False)),
         "no_seatbelt": bool(parsed.get("no_seatbelt", False)),
@@ -113,7 +120,7 @@ def analyze_violation(app, violation_id: int) -> None:
     with app.app_context():
         logger.info("Starting analysis for violation %d", violation_id)
 
-        violation = Violation.query.get(violation_id)
+        violation = db.session.get(Violation, violation_id)
         if not violation:
             logger.error("Violation %d not found in DB", violation_id)
             return
@@ -128,13 +135,21 @@ def analyze_violation(app, violation_id: int) -> None:
         last_exc = None
         for attempt in range(1, max_retries + 1):
             try:
-                violation_type = _run_analysis(violation, upload_folder, model)
+                result = _run_analysis(violation, upload_folder, model)
+
+                if not result.get("valid", True):
+                    logger.warning("Violation %d: photo does not show a vehicle driver — marking failed", violation_id)
+                    violation.ai_result = {"error": "Fotoğraf geçersiz", "reason": "invalid_scene"}
+                    violation.ai_status = "failed"
+                    last_exc = None
+                    break
+
+                violation_type = {k: result[k] for k in ("phone", "smoking", "no_seatbelt")}
                 violation.violation_type = violation_type
                 violation.ai_status = "completed"
 
                 try:
-                    from models import User
-                    owner = User.query.get(violation.vehicle.owner_id)
+                    owner = db.session.get(User, violation.vehicle.owner_id)
                     if owner:
                         penalty = sum(5 for v in violation_type.values() if v)
                         if penalty > 0:
@@ -148,6 +163,23 @@ def analyze_violation(app, violation_id: int) -> None:
                             )
                 except Exception as exc:
                     logger.warning("Could not update points: %s", exc)
+
+                # AI analizi tamamlandı → araç sahibine email gönder
+                try:
+                    vehicle = violation.vehicle
+                    if vehicle and vehicle.owner_id:
+                        owner = db.session.get(User, vehicle.owner_id)
+                        if owner:
+                            mail_service.send_violation_email(
+                                to=owner.email,
+                                username=owner.username,
+                                violation_id=violation.id,
+                                plate=violation.plate,
+                                location=violation.location,
+                            )
+                            logger.info("Violation email sent to %s for violation %d", owner.email, violation_id)
+                except Exception as exc:
+                    logger.warning("Could not send violation email: %s", exc)
 
                 logger.info("Analysis complete for violation %d: %s", violation_id, violation_type)
                 last_exc = None

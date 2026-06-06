@@ -5,13 +5,14 @@ import {
   Menu, X, Plus, Trash2, Edit2, ChevronUp, ChevronDown,
   Eye, CheckCircle2, XCircle, Loader2, RefreshCw,
   TrendingUp, MapPin, Calendar, ChevronRight,
+  Gauge, Phone, Cigarette, AlertTriangle,
 } from 'lucide-react'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend,
 } from 'recharts'
-import { admin as adminApi, BASE_URL } from '../services/api'
-import { getUser } from '../utils/auth'
+import { admin as adminApi } from '../services/api'
+import { getUser, logout } from '../utils/auth'
 import { fmtDate, fmtDateShort } from '../utils/format'
 import { normalizePlate, validatePlate } from '../utils/plate'
 import Modal from '../components/Modal'
@@ -681,9 +682,7 @@ export default function AdminPanel() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   function handleLogout() {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    navigate('/login', { replace:true })
+    logout(navigate)
   }
 
   function NavItem({ id, label, Icon }) {

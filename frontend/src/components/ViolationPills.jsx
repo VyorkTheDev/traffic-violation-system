@@ -7,8 +7,6 @@ export default function ViolationPills({ vt, speed, speedLimit }) {
   if (vt?.no_seatbelt) pills.push({ icon: <AlertTriangle className="w-3 h-3" />, label: 'Kemer',     cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' })
   if (speed != null && speedLimit != null && speed > speedLimit)
     pills.push({ icon: <Gauge className="w-3 h-3" />, label: `${speed} / ${speedLimit} km/h`, cls: 'bg-purple-500/20 text-purple-300 border-purple-500/30' })
-  else if (speed != null && speedLimit == null)
-    pills.push({ icon: <Gauge className="w-3 h-3" />, label: `${speed} km/h`, cls: 'bg-purple-500/20 text-purple-300 border-purple-500/30' })
 
   if (!pills.length) return <span className="text-xs text-slate-500">—</span>
   return (

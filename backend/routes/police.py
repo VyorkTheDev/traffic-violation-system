@@ -58,6 +58,7 @@ def search_vehicle():
                     "speed_limit": v.speed_limit,
                     "location": v.location,
                     "ai_status": v.ai_status,
+                    "ai_result": v.ai_result,
                     "photo_url": v.photo_url,
                     "created_at": v.created_at.isoformat(),
                 }

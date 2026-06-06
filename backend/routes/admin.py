@@ -4,7 +4,7 @@ import bcrypt
 import cloudinary
 import cloudinary.uploader
 from flask import Blueprint, request, current_app
-from sqlalchemy import func, cast, Date, case
+from sqlalchemy import func, cast, Date, case, String
 from sqlalchemy.orm import joinedload
 
 from models import db, User, Vehicle, Violation
@@ -51,7 +51,7 @@ def create_user():
     if role not in ("citizen", "police", "admin"):
         return err("role must be citizen, police or admin", 400)
 
-    if User.query.filter_by(username=username).first():
+    if User.query.filter(func.lower(User.username) == username.lower()).first():
         return err("Username already taken", 409)
 
     if User.query.filter_by(email=email).first():
@@ -154,7 +154,7 @@ def create_vehicle():
     except (ValueError, TypeError):
         return err("year and owner_id must be integers", 400)
 
-    if not User.query.get(owner_id):
+    if not db.session.get(User, owner_id):
         return err(f"User #{owner_id} not found", 404)
 
     if Vehicle.query.filter_by(plate=plate).first():
@@ -224,7 +224,7 @@ def list_violations():
         else:
             # JSON boolean filter: violation_type->>'key' = 'true'
             query = query.filter(
-                Violation.violation_type[violation_type].astext == "true"
+                cast(Violation.violation_type[violation_type], String) == "true"
             )
 
     page     = request.args.get("page", 1, type=int)
@@ -296,9 +296,9 @@ def stats():
 
     # Violation type distribution — single aggregate query (no Python loop)
     dist_row = db.session.query(
-        func.count(case((Violation.violation_type["phone"].astext      == "true", 1))).label("phone"),
-        func.count(case((Violation.violation_type["smoking"].astext    == "true", 1))).label("smoking"),
-        func.count(case((Violation.violation_type["no_seatbelt"].astext == "true", 1))).label("no_seatbelt"),
+        func.count(case((cast(Violation.violation_type["phone"],       String) == "true", 1))).label("phone"),
+        func.count(case((cast(Violation.violation_type["smoking"],     String) == "true", 1))).label("smoking"),
+        func.count(case((cast(Violation.violation_type["no_seatbelt"], String) == "true", 1))).label("no_seatbelt"),
         func.count(Violation.speed).label("speed"),
     ).one()
     type_dist = {

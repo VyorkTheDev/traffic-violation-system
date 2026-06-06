@@ -40,18 +40,16 @@ def create_app():
     from routes.violations import violations_bp
     from routes.police import police_bp
     from routes.admin import admin_bp
-    from routes.notifications import notifications_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(vehicles_bp)
     app.register_blueprint(violations_bp)
     app.register_blueprint(police_bp)
     app.register_blueprint(admin_bp)
-    app.register_blueprint(notifications_bp)
 
-    # Yeni kurulumda tabloları oluştur.
-    # Mevcut DB için: alembic upgrade head komutunu kullanın.
-    with app.app_context():
-        db.create_all()
+    # Production uses `alembic upgrade head`. create_all() only for local dev.
+    if app.config.get("DEBUG"):
+        with app.app_context():
+            db.create_all()
 
     # Serve uploaded photos
     @app.get("/uploads/<path:filename>")
@@ -84,6 +82,7 @@ def create_app():
         db.session.rollback()
         return err("Internal server error", 500)
 
+    import atexit
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
 
@@ -92,9 +91,13 @@ def create_app():
             db.session.execute(db.text("UPDATE users SET points = 100, license_status = 'valid'"))
             db.session.commit()
 
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(reset_points, CronTrigger(month=1, day=1, hour=0, minute=0))
-    scheduler.start()
+    # DISABLE_SCHEDULER=true set edilirse scheduler başlatılmaz.
+    # Gunicorn multi-worker ortamında sadece bir process'te true bırakın.
+    if os.environ.get("DISABLE_SCHEDULER", "false").lower() != "true":
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(reset_points, CronTrigger(month=1, day=1, hour=0, minute=0))
+        scheduler.start()
+        atexit.register(lambda: scheduler.shutdown(wait=False))
 
     return app
 

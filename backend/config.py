@@ -48,7 +48,7 @@ class Config:
     CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
 
     # Uploads — absolute path so background threads always find the files
-    _uploads_raw = os.getenv("UPLOAD_FOLDER", "uploadss")
+    _uploads_raw = os.getenv("UPLOAD_FOLDER", "uploads")
     UPLOAD_FOLDER = _uploads_raw if os.path.isabs(_uploads_raw) else os.path.join(
         os.path.dirname(os.path.abspath(__file__)), _uploads_raw
     )
