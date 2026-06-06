@@ -179,7 +179,7 @@ function TabDashboard() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                 <XAxis dataKey="name" tick={{ fill:'#94a3b8', fontSize:11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill:'#94a3b8', fontSize:11 }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={{ background:'#1e293b', border:'1px solid #334155', borderRadius:8, color:'#f1f5f9' }} />
+                <Tooltip contentStyle={{ background:'#1e293b', border:'1px solid #334155', borderRadius:8, color:'#f1f5f9' }} itemStyle={{ color:'#ffffff' }} labelStyle={{ color:'#ffffff' }} />
                 <Bar dataKey="value" radius={[6,6,0,0]} name="Adet">
                   {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                 </Bar>
